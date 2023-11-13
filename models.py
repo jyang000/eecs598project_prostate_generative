@@ -21,3 +21,15 @@ class NeuralNetwork(nn.Module):
         x = self.flatten(x)
         logits = self.linear_relu_stack(x)
         return logits
+    
+
+
+
+class UNET(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        # add layers info
+
+    def  forward(self, x):
+
+        return x
