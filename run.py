@@ -6,6 +6,7 @@ import torch
 import torch.optim as optim
 
 from models import NeuralNetwork
+import datasets
 
 
 def get_configs():
@@ -61,6 +62,9 @@ def train():
     # Create checkpoints directory
 
     # Build data iterator
+    train_ds,eval_ds = datasets.get_dataset('FashionMNIST')
+    train_iter = iter(train_ds)
+    eval_iter = iter(eval_ds)
 
     # Define the loss function
     def loss_fn(model, batchdata):
@@ -93,16 +97,18 @@ def train():
     for step in range(initial_step, num_train_step+1):
 
         # Get the batch of data
-        databatch = None
+        databatch, labelbatch = next(train_iter)
+        # print(databatch.shape)
+        # print(labelbatch.shape)
 
         # Execute one training step
-        loss = train_step_fn(df_model,databatch)
+        # loss = train_step_fn(df_model,databatch)
 
         # Report the evaluation:
         if step % config.training.eval_freq  == 0:
             print('step={}'.format(step))
-            eval_batch = None
-            eval_loss = eval_step_fn(df_model,eval_batch)
+            # eval_batch = None
+            # eval_loss = eval_step_fn(df_model,eval_batch)
 
         # Save checkpoint and generate samples if needed
         # TODO (not necessary now)
