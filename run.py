@@ -5,6 +5,8 @@ import ml_collections
 import torch
 import torch.optim as optim
 
+import losses
+
 from models import NeuralNetwork
 import datasets
 
