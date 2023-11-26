@@ -10,11 +10,11 @@
 
 
 
-
-
 import run
 from absl import app
 from absl import flags
+
+import run_test
 
 FLAGS = flags.FLAGS
 
@@ -27,7 +27,10 @@ flags.DEFINE_enum("mode", 'train', ["train","run"],"running mode")
 def main(argv):
     print(FLAGS.workdir)
     print(FLAGS.mode)
-    run.train()
+    # run.train()
+    # run.train_classification()
+
+    run_test.experiment()
 
 
 
