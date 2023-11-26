@@ -38,6 +38,7 @@ def main():
     config = run.get_configs()
     img_size = config.data.image_size
     batch_size = 1
+    print('config.device:',config.device)
 
     # Read data
     img = torch.from_numpy(np.load(filename))
@@ -83,6 +84,7 @@ def main():
         save_root_f = save_root / t
         save_root_f.mkdir(parents=True, exist_ok=True)
 
+
     ###############################################
     # 2. Inference
     ###############################################
@@ -103,6 +105,9 @@ def main():
     # undersampling
     under_kspace = kspace * mask
     under_img = torch.real(ifft2(under_kspace))
+
+    # test:
+    # print(mask.device,under_kspace.device) # cuda:0
 
     print(f'Beginning inference')
     tic = time.time()

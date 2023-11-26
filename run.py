@@ -8,7 +8,7 @@ import torch.nn as nn
 
 import losses
 
-# from NeuralNet import NeuralNetwork
+from NeuralNet import NeuralNetwork
 # from AlexNet import AlexNet
 from models import ncsnpp
 from models import utils as mutils
@@ -116,7 +116,8 @@ def get_configs():
     optim.grad_clip = 1.
 
     config.seed = 42
-    config.device = torch.device('cpu')
+    # config.device = torch.device('cpu')
+    config.device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 
     return config
 
@@ -153,12 +154,12 @@ def train_classification():
         return loss
 
     # One-step evaluation function
-    def eval_step_fn(model,batchdata,batchlabel):
-        model.eval()
-        with torch.no_grad():
-            pred = model(batchdata)
-            correct = (pred.argmax(1)==y).type(torch.float).sum().item()
-        return correct
+    # def eval_step_fn(model,batchdata,batchlabel):
+    #     model.eval()
+    #     with torch.no_grad():
+    #         pred = model(batchdata)
+    #         correct = (pred.argmax(1)==y).type(torch.float).sum().item()
+    #     return correct
 
     # Optimization
     initial_epoch = 0

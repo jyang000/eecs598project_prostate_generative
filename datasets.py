@@ -91,7 +91,7 @@ def get_dataset(dataset_name):
 
 if __name__=='__main__':
     # a test
-    train_ds,test_ds = get_dataset(dataset_name='MNIST')
+    train_ds,test_ds = get_dataset(dataset_name='FashionMNIST')
     train_ds_iter = iter(train_ds)
     x,label = next(train_ds_iter)
     print(x.shape)
