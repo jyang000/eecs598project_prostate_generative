@@ -5,11 +5,11 @@
 
 import torch
 from torch import nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader,Dataset
 from torchvision import datasets
 from torchvision.transforms import ToTensor
-
-
+import numpy as np
+from pathlib import Path
 
 
 
@@ -75,13 +75,65 @@ def mnist():
 
 # -----------------------------------------
 
+
+class Fastmri_Prostate(Dataset):
+    def __init__(self, root, sort=True):
+        self.root = root
+        self.data_list = list(root.glob('*/*.npy'))
+        if sort:
+            self.data_list = sorted(self.data_list)
+
+    def __len__(self):
+        return len(self.data_list)
+
+    def __getitem__(self, idx):
+        fname = self.data_list[idx]
+        # data = np.load(fname).astype(np.complex64)
+        data = np.load(fname)
+        data = np.expand_dims(data, axis=0)
+        return data, str(fname)
+
+
+
+def fastmri_prostate():
+    '''
+    fastmri prostate dataset
+    data size = 30*320*320
+    '''
+    train_dataset = Fastmri_Prostate(root=Path('/scratch/Datasets/fastmri/prostate_training_T2'))
+    print('dataset size:',len(train_dataset.data_list))
+    # print(train_dataset.__len__())
+    # print(train_dataset.data_list)
+    # return 0,0
+
+    eval_dataset = None
+
+    train_dataloader = DataLoader(
+        dataset=train_dataset,
+        batch_size=1,
+        shuffle=False,
+        drop_last=True,
+    )
+    # eval_dataloader = DataLoader(
+    #     dataset=eval_dataset,
+    #     batch_size=32,
+    #     shuffle=True,
+    #     drop_last=True,
+    # )
+    eval_dataloader = None
+    return train_dataloader,eval_dataloader
+
+
+##########################################################
+# Function that get the dataset
+
 def get_dataset(dataset_name):
     if dataset_name == 'FashionMNIST':
         train_ds,eval_ds = fashionmnist()
     elif dataset_name == 'MNIST':
         train_ds,eval_ds = mnist()
     elif dataset_name == 'fastmri_prostate':
-        pass
+        train_ds,eval_ds = fastmri_prostate()
     elif dataset_name == 'CIFAR10':
         pass
     else:
@@ -91,7 +143,8 @@ def get_dataset(dataset_name):
 
 if __name__=='__main__':
     # a test
-    train_ds,test_ds = get_dataset(dataset_name='FashionMNIST')
+    train_ds,test_ds = get_dataset(dataset_name='fastmri_prostate')
     train_ds_iter = iter(train_ds)
     x,label = next(train_ds_iter)
     print(x.shape)
+    print(label)

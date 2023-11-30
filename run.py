@@ -16,6 +16,12 @@ from models.ema import ExponentialMovingAverage
 import datasets
 import sde_lib
 
+import os
+from utils import save_checkpoint,restore_checkpoint
+import data_utils
+
+from time import time
+
 
 def get_configs():
     config = ml_collections.ConfigDict()
@@ -27,7 +33,7 @@ def get_configs():
     # training.n_iters = 130
     training.snapshot_freq = 50000
     training.log_freq = 50
-    training.eval_freq = 100
+    training.eval_freq = 50
     ## store additional checkpoints for preemption in cloud computing environments
     training.snapshot_freq_for_preemption = 10000
     ## produce samples at each snapshot.
@@ -62,14 +68,13 @@ def get_configs():
     # Data
     config.data = data = ml_collections.ConfigDict()
     data.dataset = 'LSUN'
-    data.image_size = 256
+    # data.dataset = 'fastmri_knee'
+    data.image_size = 320
     data.random_flip = True
     data.uniform_dequantization = False
     data.centered = False
     data.num_channels = 1
-    # data.dataset = 'fastmri_knee'
     # data.root = ''
-    # data.image_size = 320
     data.is_multi = False
     data.is_complex = True
 
@@ -179,10 +184,12 @@ def train():
 
     '''
     config = get_configs()
-    device = 'cpu'
+    # device = 'cpu'
+    epoch = 0
 
     # Create directory for logs
-    # TBD
+    workdir = './training_log'
+    if not os.path.exists(workdir): os.mkdir(workdir)
 
 
     # Initialize the model
@@ -194,15 +201,34 @@ def train():
     optimizer = optim.Adam(score_model.parameters(), lr=config.optim.lr, betas=(config.optim.beta1, 0.999), 
                            eps=config.optim.eps,
                            weight_decay=config.optim.weight_decay)
-    state = dict(optimizer=optimizer, model=score_model, step=0)
+    state = dict(optimizer=optimizer, model=score_model, ema=ema, step=0, epoch=0)
     # print(state)
     
     # Create checkpoints directory
+    checkpoint_dir = os.path.join(workdir,"checkpoints")
+    checkpoint_meta_dir = os.path.join(workdir,"checkpoint_meta")
+    if not os.path.exists(checkpoint_dir): os.mkdir(checkpoint_dir)
+    if not os.path.exists(checkpoint_meta_dir): os.mkdir(checkpoint_meta_dir)
+    # If there is intermediate checkpoints, and need to run from it
+    if False:
+        state = restore_checkpoint(os.path.join(checkpoint_meta_dir,"checkpoint.pth"),state,config.device)
+        initial_step = int(state['step'])
+        initial_epoch = int(state['epoch'])
+        print(f'initial epoch = {initial_epoch}')
+    else:
+        initial_epoch = 0
+    num_train_epoch = config.training.epochs
 
     # Build data iterator
-    train_ds,eval_ds = datasets.get_dataset('FashionMNIST')
+    # train_ds,eval_ds = datasets.get_dataset('FashionMNIST')
+    train_ds,eval_ds = datasets.get_dataset('fastmri_prostate')
     train_iter = iter(train_ds)
-    eval_iter = iter(eval_ds)
+    # eval_iter = iter(eval_ds)
+
+    # Create data normalizer and its inverse
+    scaler = data_utils.get_data_scaler(config)
+    inverse_scaler = data_utils.get_data_inverse_scaler(config)
+
 
     # Setup SDEs
     sde = sde_lib.VESDE(sigma_min=config.model.sigma_min,sigma_max=config.model.sigma_max,N=config.model.num_scales)
@@ -212,22 +238,29 @@ def train():
     # Define the loss function
     reduce_mean = config.training.reduce_mean
     likelihood_weighting = config.training.likelihood_weighting
-    loss_fn = losses.get_sde_loss_fn(sde,train=True,reduce_mean=reduce_mean,continuous=True,likelihood_weighting=likelihood_weighting)
+    loss_fn = losses.get_sde_loss_fn(
+        sde,train=True,reduce_mean=reduce_mean,continuous=True,likelihood_weighting=likelihood_weighting
+    )
 
 
     # Prepare functions for training
     # One-step training function
-    def train_step_fn(model, batchdata):
+    def train_step_fn(state, batchdata):
+        model = state['model']
+        optimizer = state['optimizer']
         optimizer.zero_grad()
         loss = loss_fn(model,batchdata)
         loss.backward()
-        
         # may include other operation when optimizing
         optimizer.step()
-
+        # 
+        state['step'] += 1
+        state['ema'].update(model.parameters())
+        # Return of loss
         return loss
     # One-step evaulation function
-    def eval_step_fn(model, batchdata):
+    def eval_step_fn(state, batchdata):
+        model = state['model']
         with torch.no_grad():
             loss = loss_fn(model,batchdata)
         return loss
@@ -237,26 +270,50 @@ def train():
 
 
 
-    initial_step = 0
-    num_train_step = 100
+    start_time = time()
+
     # Training
-    for step in range(initial_step, num_train_step+1):
+    fcheckpoint = os.path.join(checkpoint_dir,'checkpoint_.pth')
+    for epoch in range(initial_epoch, num_train_epoch):
+        total_time = time() - start_time
+        print(f'Epoch: {epoch} ============================ {total_time/60/60} h')
+        for step,(databatch,labelbatch) in enumerate(train_ds):
+            # Get the batch of data, and move to target device
+            databatch = databatch.to(config.device)
+            databatch = scaler(databatch)
+            # ------------------------
+            # print(databatch.shape)
+            # print(labelbatch.shape)
+            # print(databatch.device)
+            # loss = loss_fn(score_model,databatch)
 
-        # Get the batch of data
-        databatch, labelbatch = next(train_iter)
-        # print(databatch.shape)
-        # print(labelbatch.shape)
+            
+            # Execute one training step
+            loss = train_step_fn(state,databatch)
+            # print(loss)
 
-        # Execute one training step
-        # loss = train_step_fn(score_model,databatch)
+            # Report the evaluation:
+            if step % config.training.eval_freq  == 0:
+                # print('step={}'.format(step))
+                print('[step][{:8}] [loss={}]'.format(step,loss))
+                # eval_batch = None
+                # eval_loss = eval_step_fn(score_model,eval_batch)
+            
+            # xxxx a silly test
+            if step > 55:
+                break
+        # Save checkpoint for each epoch
+        print('save check point')
+        state = dict(optimizer=optimizer, model=score_model, ema=ema, step=step, epoch=epoch+1)
+        if epoch%200 != 0:
+            try:
+                os.remove(fcheckpoint)
+            except:
+                pass
+        fcheckpoint = os.path.join(checkpoint_dir,f'checkpoint_{epoch}.pth')
+        save_checkpoint(fcheckpoint,state)
 
-        # Report the evaluation:
-        if step % config.training.eval_freq  == 0:
-            print('step={}'.format(step))
-            # eval_batch = None
-            # eval_loss = eval_step_fn(score_model,eval_batch)
-
-        # Save checkpoint and generate samples if needed
+        # Generate samples if needed
         # TODO (not necessary now)
 
     return

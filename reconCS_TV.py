@@ -3,7 +3,7 @@
 import torch
 
 
-def total_var(x):
+def total_var_operator(x):
 	'''compute total variation
 
 	input:

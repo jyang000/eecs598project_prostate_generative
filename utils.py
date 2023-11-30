@@ -21,6 +21,17 @@ def ifft2(x):
   return torch.fft.ifft2(torch.fft.ifftshift(x, dim=[-1, -2]))
 
 
+# -----------------------
+# add transform for 3D reconstruction (jy)
+def fft3(x):
+  ''''''
+  return torch.fft.fftshift(torch.fft.fftn(x), dim=[-1, -2, -3])
+
+def ifft3(x):
+  return torch.fft.ifftn(torch.fft.ifftshift(x, dim=[-1, -2, -3]))
+# ---------------------------
+
+
 def fft2_m(x):
   """ FFT for multi-coil """
   return torch.view_as_complex(fft2c_new(torch.view_as_real(x)))
@@ -262,5 +273,20 @@ def restore_checkpoint(ckpt_dir, state, device, skip_sigma=False):
   state['model'].load_state_dict(loaded_model_state, strict=False)
   state['ema'].load_state_dict(loaded_state['ema'])
   state['step'] = loaded_state['step']
+  try:
+    state['epoch'] = loaded_state['epoch']
+  except:
+    state['epoch'] = None
   print(f'loaded checkpoint dir from {ckpt_dir}')
   return state
+
+
+def save_checkpoint(ckpt_dir, state):
+  saved_state = {
+    'optimizer': state['optimizer'].state_dict(),
+    'model': state['model'].state_dict(),
+    'ema': state['ema'].state_dict(),
+    'step': state['step'],
+    'epoch': state['epoch'],
+  }
+  torch.save(saved_state, ckpt_dir)

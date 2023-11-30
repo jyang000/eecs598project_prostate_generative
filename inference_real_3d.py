@@ -19,30 +19,24 @@ import run
 
 
 def main():
-    ###############################################
-    # 1. Configurations
-    ###############################################
+    #########################################
+    # 1. Configuration
 
-    # args
-    args = create_argparser().parse_args()
-    N = args.N
-    m = args.m
-    # fname = '001'
-    fname = args.data
-    filename = f'./samples/real/{args.task}/{fname}.npy'
-    mask_filename = f'./samples/real/prospective/{fname}_mask.npy'
+    N = None
+    m = 1
+    fname = ''
+    filename = ''
+    mask_filename = ''
 
-    print('initaializing...')
-    # configs = importlib.import_module(f"configs.ve.fastmri_knee_320_ncsnpp_continuous")
-    # config = configs.get_config()
+    print('initializing...')
     config = run.get_configs()
     img_size = config.data.image_size
     batch_size = 1
     print('config.device:',config.device)
 
+
     # Read data
-    # ------------
-    if False:
+    if True:
         # Knee data sample
         img = torch.from_numpy(np.load(filename))
     else:
@@ -50,21 +44,18 @@ def main():
         filename = '/scratch/Projects/fastmri_prostate/0001.npy'
         img = torch.from_numpy(np.load(filename))
         img = img[4,:,:]
-    # -----------------------
     img = img.view(1, 1, 320, 320)
     img = img.to(config.device)
-    if args.task == 'retrospective':
-        # generate mask
-        mask = get_mask(img, img_size, batch_size,
-                        type=args.mask_type,
-                        acc_factor=args.acc_factor,
-                        center_fraction=args.center_fraction)
-    elif args.task == 'prospective':
-        mask = torch.from_numpy(np.load(mask_filename))
-        mask = mask.view(1, 1, 320, 320)
 
-    # ckpt_filename = f"./weights/checkpoint_95.pth" # knee model
-    ckpt_filename = f"./training_log/checkpoints/checkpoint_80.pth" # prostate model
+    # 'retrospective':
+    # generate mask
+    mask = get_mask(img, img_size, batch_size,
+                    type=args.mask_type,
+                    acc_factor=args.acc_factor,
+                    center_fraction=args.center_fraction)
+    
+    ckpt_filename = f"./weights/checkpoint_95.pth" # knee model
+    # ckpt_filename = f"./training_log/checkpoints/checkpoint_3.pth" # prostate model
     sde = VESDE(sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max, N=N)
 
     config.training.batch_size = batch_size
@@ -141,33 +132,7 @@ def main():
         np.save(str(save_root / 'label' / fname) + '.npy', label)
         plt.imsave(str(save_root / 'input' / fname) + '.png', input, cmap='gray')
         plt.imsave(str(save_root / 'label' / fname) + '.png', label, cmap='gray')
-        plt.imsave(str(save_root / 'mask' / fname) + '.png', mask_sv, cmap='gray')
 
     recon = x.squeeze().cpu().detach().numpy()
     np.save(str(save_root / 'recon' / fname) + '.npy', recon)
     plt.imsave(str(save_root / 'recon' / fname) + '.png', recon, cmap='gray')
-
-
-def create_argparser():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--task', choices=['retrospective', 'prospective'], default='retrospective',
-                        type=str, help='If retrospective, under-samples the fully-sampled data with generated mask.'
-                                       'If prospective, runs score-POCS with the given mask')
-    parser.add_argument('--data', type=str, default='001', help='which data to use for reconstruction', required=False)
-    parser.add_argument('--mask_type', type=str, help='which mask to use for retrospective undersampling.'
-                                                      '(NOTE) only used for retrospective model!', default='gaussian1d',
-                        choices=['gaussian1d', 'uniform1d', 'gaussian2d'])
-    parser.add_argument('--acc_factor', type=int, help='Acceleration factor for Fourier undersampling.'
-                                                       '(NOTE) only used for retrospective model!', default=4)
-    parser.add_argument('--center_fraction', type=float, help='Fraction of ACS region to keep.'
-                                                       '(NOTE) only used for retrospective model!', default=0.08)
-    parser.add_argument('--save_dir', default='./results')
-    parser.add_argument('--N', type=int, help='Number of iterations for score-POCS sampling', default=2000)
-    parser.add_argument('--m', type=int, help='Number of corrector step per single predictor step.'
-                                              'It is advised not to change this default value.', default=1)
-    return parser
-
-
-if __name__ == "__main__":
-    main()
-    pass

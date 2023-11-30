@@ -264,7 +264,9 @@ def get_pc_sampler(sde, shape, predictor, corrector, inverse_scaler, snr,
 
       time_corrector_tot = 0
       time_predictor_tot = 0
-      for i in range(sde.N):
+
+      for i in tqdm(range(sde.N), total=sde.N):
+      # for i in range(sde.N):
         t = timesteps[i]
         vec_t = torch.ones(shape[0], device=t.device) * t
         tic_corrector = time.time()
@@ -603,6 +605,157 @@ def get_pc_fouriercs_RI_coil_SENSE(sde, predictor, corrector, inverse_scaler, sn
               plt.imsave(save_root / 'recon' / f'coil{c}' / f'after{i}.png', np.abs(x_c), cmap='gray')
             x_rss = clear(root_sum_of_squares(torch.abs(x), dim=1).squeeze())
             plt.imsave(save_root / 'recon' / f'after{i}.png', x_rss, cmap='gray')
+
+      return inverse_scaler(x_mean if denoise else x)
+
+  return pc_fouriercs
+
+
+
+# -------------------------
+# for 3D mr images (jy)
+
+def get_pc_fouriercs_fast_3d(sde, predictor, corrector, inverse_scaler, snr,
+                          n_steps=1, probability_flow=False, continuous=False,
+                          denoise=True, eps=1e-5, save_progress=False, save_root=None):
+  """Create a PC sampler for solving compressed sensing problems as in MRI reconstruction.
+
+  Args:
+    sde: An `sde_lib.SDE` object that represents the forward SDE.
+    predictor: A subclass of `sampling.Predictor` that represents a predictor algorithm.
+    corrector: A subclass of `sampling.Corrector` that represents a corrector algorithm.
+    inverse_scaler: The inverse data normalizer.
+    snr: A `float` number. The signal-to-noise ratio for the corrector.
+    n_steps: An integer. The number of corrector steps per update of the corrector.
+    continuous: `True` indicates that the score-based model was trained with continuous time.
+    denoise: If `True`, add one-step denoising to final samples.
+    eps: A `float` number. The reverse-time SDE/ODE is integrated to `eps` for numerical stability.
+
+  Returns:
+    A CS solver function.
+  """
+  # Define predictor & corrector
+  predictor_update_fn = functools.partial(shared_predictor_update_fn,
+                                          sde=sde,
+                                          predictor=predictor,
+                                          probability_flow=probability_flow,
+                                          continuous=continuous)
+  corrector_update_fn = functools.partial(shared_corrector_update_fn,
+                                          sde=sde,
+                                          corrector=corrector,
+                                          continuous=continuous,
+                                          snr=snr,
+                                          n_steps=n_steps)
+
+  def data_fidelity(mask, x, Fy):
+      """
+      Data fidelity operation for Fourier CS
+      x: Current aliased img
+      Fy: k-space measurement data (masked)
+      """
+      x = torch.real(ifft2(fft2(x) * (1. - mask) + Fy))
+      x_mean = torch.real(ifft2(fft2(x) * (1. - mask) + Fy))
+      return x, x_mean
+
+  def get_fouriercs_update_fn(update_fn):
+    """Modify the update function of predictor & corrector to incorporate data information."""
+
+    def fouriercs_update_fn(model, data, mask, x, t, Fy=None):
+      with torch.no_grad():
+        vec_t = torch.ones(data.shape[0], device=data.device) * t
+        x, x_mean = update_fn(x, vec_t, model=model)
+        x, x_mean = data_fidelity(mask, x, Fy)
+        return x, x_mean
+
+    return fouriercs_update_fn
+
+  projector_fouriercs_update_fn = get_fouriercs_update_fn(predictor_update_fn)
+  corrector_fouriercs_update_fn = get_fouriercs_update_fn(corrector_update_fn)
+
+  nslices = 20
+
+  def pc_fouriercs(model, data, mask, Fy=None):
+    with torch.no_grad():
+      # Initial sample
+      x_3d = None
+      for slice in range(nslices):
+        # initial sample for each slice
+        pass
+      x = torch.real(ifft2(Fy + fft2(sde.prior_sampling(data.shape).to(data.device)) * (1. - mask)))
+      timesteps = torch.linspace(sde.T, eps, sde.N)
+      for i in tqdm(range(sde.N), total=sde.N):
+        t = timesteps[i]
+        # recover each slice, and together project
+        pass
+        x, x_mean = corrector_fouriercs_update_fn(model, data, mask, x, t, Fy=Fy)
+        x, x_mean = projector_fouriercs_update_fn(model, data, mask, x, t, Fy=Fy)
+        if save_progress and i >= 300 and i % 100 == 0:
+          plt.imsave(save_root / f'step{i}.png', clear(x_mean), cmap='gray')
+
+      return inverse_scaler(x_mean if denoise else x)
+
+  return pc_fouriercs
+
+
+# ------------------------------------
+
+
+
+
+
+def get_pc_fouriercs_RI(sde, predictor, corrector, inverse_scaler, snr,
+                        n_steps=1, probability_flow=False, continuous=False,
+                        denoise=True, eps=1e-5):
+  # Define predictor & corrector
+  predictor_update_fn = functools.partial(shared_predictor_update_fn,
+                                          sde=sde,
+                                          predictor=predictor,
+                                          probability_flow=probability_flow,
+                                          continuous=continuous)
+  corrector_update_fn = functools.partial(shared_corrector_update_fn,
+                                          sde=sde,
+                                          corrector=corrector,
+                                          continuous=continuous,
+                                          snr=snr,
+                                          n_steps=n_steps)
+
+  def data_fidelity(mask, x, x_mean, Fy):
+      x = ifft2(fft2(x) * (1. - mask) + Fy)
+      x_mean = ifft2(fft2(x_mean) * (1. - mask) + Fy)
+      return x, x_mean
+
+  def get_fouriercs_update_fn(update_fn):
+    def fouriercs_update_fn(model, data, mask, x, t, Fy=None):
+      with torch.no_grad():
+        vec_t = torch.ones(data.shape[0], device=data.device) * t
+        # split real / imag part
+        x_real = torch.real(x)
+        x_imag = torch.imag(x)
+
+        # perform update step with real / imag part seperately
+        x_real, x_real_mean = update_fn(x_real, vec_t, model=model)
+        x_imag, x_imag_mean = update_fn(x_imag, vec_t, model=model)
+
+        # merge real / imag values to form complex image
+        x = x_real + 1j * x_imag
+        x_mean = x_real_mean + 1j * x_imag_mean
+        x, x_mean = data_fidelity(mask, x, x_mean, Fy)
+        return x, x_mean
+
+    return fouriercs_update_fn
+
+  projector_fouriercs_update_fn = get_fouriercs_update_fn(predictor_update_fn)
+  corrector_fouriercs_update_fn = get_fouriercs_update_fn(corrector_update_fn)
+
+  def pc_fouriercs(model, data, mask, Fy=None):
+    with torch.no_grad():
+      # Initial sample (complex-valued)
+      x = ifft2(Fy + fft2(sde.prior_sampling(data.shape).to(data.device)) * (1. - mask))
+      timesteps = torch.linspace(sde.T, eps, sde.N)
+      for i in tqdm(range(sde.N)):
+        t = timesteps[i]
+        x, x_mean = corrector_fouriercs_update_fn(model, data, mask, x, t, Fy=Fy)
+        x, x_mean = projector_fouriercs_update_fn(model, data, mask, x, t, Fy=Fy)
 
       return inverse_scaler(x_mean if denoise else x)
 
