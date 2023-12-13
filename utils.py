@@ -190,6 +190,34 @@ def get_mask(img, size, batch_size, type='gaussian2d', acc_factor=8, center_frac
   return mask
 
 
+
+def get_mask3d(img,nx,ny,nz,acc_factor=4):
+  mask = torch.zeros_like(img)
+  # nz,nx,ny = mask.shape
+  Nsamp = int((nz*ny)//acc_factor)
+  # print(mask.shape)
+  
+  mean = [nz//2, ny//2]
+  cov = [[nz*nz*(1.5 / 100), 0], [0, ny*ny*(1.5 / 100)]]
+  samples = np.random.multivariate_normal(mean, cov, int(Nsamp))
+  int_samples = samples.astype(int)
+  # print(int_samples.shape)
+  int_samples[:,0] = np.clip(int_samples[:,0], 0, nz - 1)
+  int_samples[:,1] = np.clip(int_samples[:,1], 0, ny - 1)
+  
+  mask[int_samples[:,0], int_samples[:,1], :] = 1
+
+  Ny_center = int(ny*0.08)
+  y_from = ny//2 - Ny_center // 2
+  Nz_center = int(nz*0.08)
+  z_from = nz//2 - Nz_center // 2
+  mask[... , z_from:z_from + Nz_center,y_from:y_from+Ny_center,:] = 1
+  
+  return mask
+
+
+
+
 def kspace_to_nchw(tensor):
     """
     Convert torch tensor in (Slice, Coil, Height, Width, Complex) 5D format to
@@ -290,3 +318,11 @@ def save_checkpoint(ckpt_dir, state):
     'epoch': state['epoch'],
   }
   torch.save(saved_state, ckpt_dir)
+
+
+
+
+if __name__=='__main__':
+  x = torch.rand(3,3,3)
+  xf = fft3(x)
+  

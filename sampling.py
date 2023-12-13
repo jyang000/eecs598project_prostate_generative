@@ -25,7 +25,7 @@ import abc
 
 import matplotlib.pyplot as plt
 import functools
-from utils import fft2, ifft2, clear, fft2_m, ifft2_m, root_sum_of_squares
+from utils import fft2, ifft2, clear, fft2_m, ifft2_m, root_sum_of_squares, fft3, ifft3
 from tqdm import tqdm
 from models import utils as mutils
 
@@ -617,7 +617,7 @@ def get_pc_fouriercs_RI_coil_SENSE(sde, predictor, corrector, inverse_scaler, sn
 
 def get_pc_fouriercs_fast_3d(sde, predictor, corrector, inverse_scaler, snr,
                           n_steps=1, probability_flow=False, continuous=False,
-                          denoise=True, eps=1e-5, save_progress=False, save_root=None):
+                          denoise=True, eps=1e-5, save_progress=False, save_root=None, nslices=1,img_size=320):
   """Create a PC sampler for solving compressed sensing problems as in MRI reconstruction.
 
   Args:
@@ -647,24 +647,34 @@ def get_pc_fouriercs_fast_3d(sde, predictor, corrector, inverse_scaler, snr,
                                           snr=snr,
                                           n_steps=n_steps)
 
-  def data_fidelity(mask, x, Fy):
+  def data_fidelity_3d(mask, x, Fy):
       """
       Data fidelity operation for Fourier CS
       x: Current aliased img
       Fy: k-space measurement data (masked)
       """
-      x = torch.real(ifft2(fft2(x) * (1. - mask) + Fy))
-      x_mean = torch.real(ifft2(fft2(x) * (1. - mask) + Fy))
+      x = torch.real(ifft3(fft3(x) * (1. - mask) + Fy))
+      x_mean = torch.real(ifft3(fft3(x) * (1. - mask) + Fy))
       return x, x_mean
 
   def get_fouriercs_update_fn(update_fn):
     """Modify the update function of predictor & corrector to incorporate data information."""
 
-    def fouriercs_update_fn(model, data, mask, x, t, Fy=None):
+    def fouriercs_update_fn(model, data, mask, x, t, Fy=None, nslices=1):
       with torch.no_grad():
-        vec_t = torch.ones(data.shape[0], device=data.device) * t
-        x, x_mean = update_fn(x, vec_t, model=model)
-        x, x_mean = data_fidelity(mask, x, Fy)
+        vec_t = torch.ones(1, device=data.device) * t
+        x_mean = torch.zeros_like(x)
+        for slice in range(nslices):
+          # print('slice',slice)
+          xslice = x[slice]
+          # print(xslice.shape)
+          xslice = xslice.view(1,1,img_size,img_size)
+          xslice, x_mean_slice = update_fn(xslice, vec_t, model=model)
+          # 
+          x[slice] = xslice.squeeze()
+          x_mean[slice] = x_mean_slice.squeeze()
+        # 3D data fidelity
+        x, x_mean = data_fidelity_3d(mask, x, Fy)
         return x, x_mean
 
     return fouriercs_update_fn
@@ -672,25 +682,51 @@ def get_pc_fouriercs_fast_3d(sde, predictor, corrector, inverse_scaler, snr,
   projector_fouriercs_update_fn = get_fouriercs_update_fn(predictor_update_fn)
   corrector_fouriercs_update_fn = get_fouriercs_update_fn(corrector_update_fn)
 
-  nslices = 20
+  def save_img3d(path,img):
+    ns,ny,nx = img.shape
+    nrow = 5
+    ncol = int(ns//5)
+    img_big = np.zeros((ny*nrow,nx*ncol))
+    nim = 0
+    for yid in range(nrow):
+      for xid in range(ncol):
+        img_big[yid*ny:(yid+1)*ny,xid*nx:(xid+1)*nx] = img[nim]
+        nim = nim + 1
+        if nim == ns:
+          break
+      if nim == ns:
+        break
+    plt.imsave(path,img_big,cmap='gray')
+    return
+
+  # nslices = 20
 
   def pc_fouriercs(model, data, mask, Fy=None):
+    # suppose the mask has the shape (nslices,ny,nx)
     with torch.no_grad():
       # Initial sample
-      x_3d = None
+      x_3d = torch.zeros((nslices,img_size,img_size),dtype=mask.dtype,device=mask.device)
       for slice in range(nslices):
-        # initial sample for each slice
-        pass
-      x = torch.real(ifft2(Fy + fft2(sde.prior_sampling(data.shape).to(data.device)) * (1. - mask)))
+      #   # initial sample for each slice
+        # x = torch.real(ifft2(Fy + fft2(sde.prior_sampling(data.shape).to(data.device)) * (1. - mask)))
+        x = sde.prior_sampling(mask[0].view(1,1,img_size,img_size).shape).to(data.device)
+        # print(x_3d.shape,x.shape)
+        x_3d[slice] = x.squeeze()
+      # initial step for data consistency
+      x_3d = torch.real(ifft3( Fy + fft3(x_3d) * (1.-mask)))
+      # x = torch.real(ifft2(Fy + fft2(sde.prior_sampling(data.shape).to(data.device)) * (1. - mask)))
+      # x_3d = x_3d.view(nslices,1,320,320)
       timesteps = torch.linspace(sde.T, eps, sde.N)
       for i in tqdm(range(sde.N), total=sde.N):
         t = timesteps[i]
-        # recover each slice, and together project
-        pass
-        x, x_mean = corrector_fouriercs_update_fn(model, data, mask, x, t, Fy=Fy)
-        x, x_mean = projector_fouriercs_update_fn(model, data, mask, x, t, Fy=Fy)
+        # recover each slice, and together project, 
+        # slice-by-slice recon in the update functions
+        x_3d, x_mean = corrector_fouriercs_update_fn(model, data, mask, x_3d, t, Fy=Fy, nslices=nslices)
+        x_3d, x_mean = projector_fouriercs_update_fn(model, data, mask, x_3d, t, Fy=Fy, nslices=nslices)
+        # Whether to save a intermediate result
         if save_progress and i >= 300 and i % 100 == 0:
-          plt.imsave(save_root / f'step{i}.png', clear(x_mean), cmap='gray')
+          # plt.imsave(save_root / f'step{i}.png', clear(x_mean), cmap='gray')
+          save_img3d(save_root / f'step{i}.png',clear(x_mean))
 
       return inverse_scaler(x_mean if denoise else x)
 

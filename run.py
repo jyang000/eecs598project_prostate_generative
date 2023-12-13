@@ -28,12 +28,12 @@ def get_configs():
 
     # Training
     config.training = training = ml_collections.ConfigDict()
-    config.training.batch_size = 1
+    config.training.batch_size = 2
     training.epochs = 1000
     # training.n_iters = 130
     training.snapshot_freq = 50000
-    training.log_freq = 50
-    training.eval_freq = 50
+    training.log_freq = 25
+    training.eval_freq = 25
     ## store additional checkpoints for preemption in cloud computing environments
     training.snapshot_freq_for_preemption = 10000
     ## produce samples at each snapshot.
@@ -69,7 +69,7 @@ def get_configs():
     config.data = data = ml_collections.ConfigDict()
     data.dataset = 'LSUN'
     # data.dataset = 'fastmri_knee'
-    data.image_size = 320
+    data.image_size = 256
     data.random_flip = True
     data.uniform_dequantization = False
     data.centered = False
@@ -77,6 +77,7 @@ def get_configs():
     # data.root = ''
     data.is_multi = False
     data.is_complex = True
+    data.nslices = 30
 
     # Model
     config.model = model = ml_collections.ConfigDict()
@@ -187,9 +188,15 @@ def train():
     # device = 'cpu'
     epoch = 0
 
+    torch.manual_seed(config.seed)
+
     # Create directory for logs
     workdir = './training_log'
     if not os.path.exists(workdir): os.mkdir(workdir)
+    log_fname = './training_log/logs.csv'
+    if not os.path.exists(log_fname):
+        with open(log_fname,'w') as f_log:
+            f_log.write('time,epoch,step,loss,evalloss\n')
 
 
     # Initialize the model
@@ -210,8 +217,8 @@ def train():
     if not os.path.exists(checkpoint_dir): os.mkdir(checkpoint_dir)
     if not os.path.exists(checkpoint_meta_dir): os.mkdir(checkpoint_meta_dir)
     # If there is intermediate checkpoints, and need to run from it
-    if False:
-        state = restore_checkpoint(os.path.join(checkpoint_meta_dir,"checkpoint.pth"),state,config.device)
+    if True:
+        state = restore_checkpoint(os.path.join(checkpoint_meta_dir,"checkpoint_45.pth"),state,config.device)
         initial_step = int(state['step'])
         initial_epoch = int(state['epoch'])
         print(f'initial epoch = {initial_epoch}')
@@ -221,7 +228,7 @@ def train():
 
     # Build data iterator
     # train_ds,eval_ds = datasets.get_dataset('FashionMNIST')
-    train_ds,eval_ds = datasets.get_dataset('fastmri_prostate')
+    train_ds,eval_ds = datasets.get_dataset('fastmri_prostate',batch_size=config.training.batch_size)
     train_iter = iter(train_ds)
     # eval_iter = iter(eval_ds)
 
@@ -262,7 +269,11 @@ def train():
     def eval_step_fn(state, batchdata):
         model = state['model']
         with torch.no_grad():
+            ema = state['ema']
+            ema.store(model.parameters())
+            ema.copy_to(model.parameters())
             loss = loss_fn(model,batchdata)
+            ema.restore(model.parameters())
         return loss
 
     # Build sampling functions
@@ -295,22 +306,36 @@ def train():
             # Report the evaluation:
             if step % config.training.eval_freq  == 0:
                 # print('step={}'.format(step))
-                print('[step][{:8}] [loss={}]'.format(step,loss))
-                # eval_batch = None
+                print('[step][{:6}] [loss][{}] --- [ {} h ]'.format(step,loss,(time()-start_time)/60/60))
+                # print('databatch',torch.mean(databatch))
+                # try:
+                #     (eval_batch, evallabelbatch) = next(eval_iter)
+                # except:
+                #     eval_iter = iter(eval_ds)
+                #     (eval_batch, evallabelbatch) = next(eval_iter)
                 # eval_loss = eval_step_fn(score_model,eval_batch)
+                # print('[step][{:6}] [loss][{}] [eval loss][{}]'.format(step,loss,eval_loss))
+            
+            # Save/Write into logs:
+            if step % config.training.log_freq == 0:
+                with open(log_fname,'a') as f_log:
+                    # f_log.write('time,epoch,step,loss,evalloss')
+                    logline = f'{time()-start_time},{epoch},{step},{loss},0\n'
+                    f_log.write(logline)
+                
             
             # xxxx a silly test
-            if step > 55:
-                break
+            # if step > 55:
+            #     break
         # Save checkpoint for each epoch
         print('save check point')
         state = dict(optimizer=optimizer, model=score_model, ema=ema, step=step, epoch=epoch+1)
-        if epoch%200 != 0:
+        if epoch%50 != 0:
             try:
                 os.remove(fcheckpoint)
             except:
                 pass
-        fcheckpoint = os.path.join(checkpoint_dir,f'checkpoint_{epoch}.pth')
+        fcheckpoint = os.path.join(checkpoint_dir,f'checkpoint_{epoch+1}.pth')
         save_checkpoint(fcheckpoint,state)
 
         # Generate samples if needed

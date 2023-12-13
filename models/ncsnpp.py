@@ -265,6 +265,7 @@ class NCSNpp(nn.Module):
     if self.progressive_input != 'none':
       input_pyramid = x
 
+    # print(x.dtype) # test
     hs = [modules[m_idx](x)]
     m_idx += 1
     for i_level in range(self.num_resolutions):

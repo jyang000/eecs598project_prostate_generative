@@ -36,22 +36,43 @@ def main():
     # configs = importlib.import_module(f"configs.ve.fastmri_knee_320_ncsnpp_continuous")
     # config = configs.get_config()
     config = run.get_configs()
+    # config.data.image_size = 320 # for knee data
+
     img_size = config.data.image_size
     batch_size = 1
     print('config.device:',config.device)
 
     # Read data
     # ------------
-    if False:
-        # Knee data sample
-        img = torch.from_numpy(np.load(filename))
-    else:
-        # Prostate data sample
-        filename = '/scratch/Projects/fastmri_prostate/0001.npy'
-        img = torch.from_numpy(np.load(filename))
-        img = img[4,:,:]
+    # Knee data sample
+    # img = torch.from_numpy(np.load(filename))
+    # print('\t',torch.mean(img),torch.var(img))
+    # print('acceleration:',args.acc_factor)
+        
+    # Prostate data sample
+    # filename = '/scratch/Projects/fastmri_prostate/0008.npy'
+    # img = torch.from_numpy(np.load(filename))
+    # img = img[15,:,:]
+    # img = img/torch.max(img)*0.2
+    # # img = img[10:(10+256),32:(32+256)]
+
+    # Different knee sample
+    # filename = '/scratch/Projects/fastmri_prostate/knee3d.npy'
+    # img = torch.from_numpy(np.load(filename))
+    # img = img.to(torch.float)
+    # print(img.shape)
+    # img = img[16]*1e3
+    # print('\timg:',torch.mean(img),torch.var(img))
+
+    # Prostate sample 256 size
+    filename = '/scratch/Projects/fastmri_prostate/0001.npy'
+    img = torch.from_numpy(np.load(filename))*3.3e3
+    img = img[:,10:(10+256),32:(32+256)]
+    img = img[15]
+
     # -----------------------
-    img = img.view(1, 1, 320, 320)
+    print('img.shape:',img.shape,img.dtype)
+    img = img.view(1, 1, img_size, img_size)
     img = img.to(config.device)
     if args.task == 'retrospective':
         # generate mask
@@ -61,10 +82,10 @@ def main():
                         center_fraction=args.center_fraction)
     elif args.task == 'prospective':
         mask = torch.from_numpy(np.load(mask_filename))
-        mask = mask.view(1, 1, 320, 320)
+        mask = mask.view(1, 1, img_size, img_size)
 
-    # ckpt_filename = f"./weights/checkpoint_95.pth" # knee model
-    ckpt_filename = f"./training_log/checkpoints/checkpoint_80.pth" # prostate model
+    ckpt_filename = f"./weights/checkpoint_95.pth" # knee model
+    # ckpt_filename = f"./training_log/checkpoints/checkpoint_80.pth" # prostate model
     sde = VESDE(sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max, N=N)
 
     config.training.batch_size = batch_size
@@ -140,8 +161,8 @@ def main():
         np.save(str(save_root / 'input' / (fname + '_mask')) + '.npy', mask_sv)
         np.save(str(save_root / 'label' / fname) + '.npy', label)
         plt.imsave(str(save_root / 'input' / fname) + '.png', input, cmap='gray')
+        plt.imsave(str(save_root / 'input' / fname) + '_mask.png', mask_sv, cmap='gray')
         plt.imsave(str(save_root / 'label' / fname) + '.png', label, cmap='gray')
-        plt.imsave(str(save_root / 'mask' / fname) + '.png', mask_sv, cmap='gray')
 
     recon = x.squeeze().cpu().detach().numpy()
     np.save(str(save_root / 'recon' / fname) + '.npy', recon)
